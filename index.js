@@ -12,7 +12,7 @@ const app = new Koa();
 
 app.env = 'production';
 
-app.use(bodyParser({ jsonLimit: '8mb' }));
+app.use(bodyParser());
 
 app.use(async (ctx, next) => {
   logger.info(`${new Date()} --> ${ctx.request.method} ${ctx.request.url}`);
