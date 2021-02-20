@@ -7,21 +7,24 @@ const Router = require('@koa/router');
 const bodyParser = require('koa-bodyparser');
 
 const configuration = require('./configuration');
-const logger = require('./logger'); // 可以换为自己的日志模块
-const persistence = require('./persistence'); // 替换为主工程的数据库连接
-const pool = require('./persistence');
+const logger = require('../sentinel/logger'); // 可以换为自己的日志模块
+const main = require('../sentinel/app'); // 替换为主工程的数据库连接
 
 const app = new Koa();
+
+module.exports = app;
 
 app.env = 'production';
 
 app.use(bodyParser());
 
-app.use(async (ctx, next) => {
-  logger.info(`${new Date()} --> ${ctx.request.method} ${ctx.request.url}`);
-  await next();
-  logger.info(`${new Date()} <-- ${ctx.request.method} ${ctx.request.url}`);
-});
+if (require.main === module) {
+  app.use(async (ctx, next) => {
+    logger.info(`${new Date()} --> ${ctx.request.method} ${ctx.request.url}`);
+    await next();
+    logger.info(`${new Date()} <-- ${ctx.request.method} ${ctx.request.url}`);
+  });
+}
 
 const router = new Router({
   prefix: '/api',
@@ -38,7 +41,7 @@ router.get('/logbook/:id', async (ctx) => {
         where id = ?
         limit 1
         `;
-    const pool = persistence.promise();
+    const pool = main.persistence.promise();
     const [result] = await pool.query(sql, [parseInt(ctx.params.id) || 0]);
     ctx.response.body = result[0] || {};
   } catch (err) {
