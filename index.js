@@ -1,14 +1,12 @@
 const cluster = require('cluster');
 const http = require('http');
-const os = require('os');
 
 const Koa = require('koa');
-const Router = require('@koa/router');
 const bodyParser = require('koa-bodyparser');
+const Router = require('@koa/router');
 
 const configuration = require('./configuration');
-const logger = require('../sentinel/logger'); // 可以换为自己的日志模块
-const main = require('../sentinel/app'); // 替换为主工程的数据库连接
+const logger = require('./logger');
 
 const app = new Koa();
 
@@ -18,19 +16,17 @@ app.env = 'production';
 
 app.use(bodyParser());
 
-if (require.main === module) {
-  app.use(async (ctx, next) => {
-    logger.info(`${new Date()} --> ${ctx.request.method} ${ctx.request.url}`);
-    await next();
-    logger.info(`${new Date()} <-- ${ctx.request.method} ${ctx.request.url}`);
-  });
-}
-
-const router = new Router({
-  prefix: '/api',
+app.use(async (ctx, next) => {
+  logger.info(`--> ${ctx.request.method} ${ctx.request.url}`);
+  await next();
+  logger.info(`<-- ${ctx.request.method} ${ctx.request.url}`);
 });
 
-router.get('/logbook/:id', async (ctx) => {
+const router = new Router({
+  prefix: '/api/logbook',
+});
+
+router.get('/:id', async (ctx) => {
   try {
     const sql = `
         select id, date_create,
@@ -50,9 +46,9 @@ router.get('/logbook/:id', async (ctx) => {
   }
 });
 
-router.put('/logbook/filter', async (ctx) => {
+router.put('/filter', async (ctx) => {
   try {
-    const filter = ctx.request.query.filter || '';
+    const filter = ctx.request.query.option || '';
     const pool = persistence.promise();
     if (filter === 'default') {
       const sql = `
@@ -85,7 +81,7 @@ router.put('/logbook/filter', async (ctx) => {
  * append log record
  * json_doc: { ref_id: 0, category: '', remark: '' }
  */
-router.post('/logbook', async (ctx) => {
+router.post('/', async (ctx) => {
   try {
     const sql = 'insert into ovaphlow.logbook (date_create, json_doc) values (now(), ?)';
     const pool = persistence.promise();
@@ -97,28 +93,22 @@ router.post('/logbook', async (ctx) => {
   }
 });
 
-(() => {
-  app.use(router.routes());
-  app.use(router.allowedMethods());
-})();
+app.use(router.routes());
+app.use(router.allowedMethods());
 
 if (require.main === module) {
   if (cluster.isMaster) {
-    logger.log(`${new Date()} 主进程 PID:${process.pid}`); // eslint-disable-line
+    logger.info(`主进程 PID:${process.pid}`); // eslint-disable-line
 
-    for (let i = 0; i < os.cpus().length; i += 1) {
-      cluster.fork();
-    }
+    cluster.fork();
 
     cluster.on('online', (worker) => {
-      logger.log(`${new Date()} 子进程 PID:${worker.process.pid} 端口:${configuration.port}`);
+      logger.info(`子进程 PID:${worker.process.pid} 端口:${configuration.port}`);
     });
 
     cluster.on('exit', (worker, code, signal) => {
-      logger.log(
-        `${new Date()} 子进程 PID:${worker.process.pid}终止，错误代码:${code}，信号:${signal}`,
-      );
-      logger.log(`${new Date()} 由主进程(PID:${process.pid})创建新的子进程`); // eslint-disable-line
+      logger.warn(`子进程 PID:${worker.process.pid}终止，错误代码:${code}，信号:${signal}`);
+      logger.warn(`由主进程(PID:${process.pid})创建新的子进程`); // eslint-disable-line
       cluster.fork();
     });
   } else {
