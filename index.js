@@ -1,18 +1,43 @@
 const cluster = require('cluster');
 const http = require('http');
+const os = require('os');
 
 const Koa = require('koa');
 const bodyParser = require('koa-bodyparser');
 const Router = require('@koa/router');
+const mysql = require('mysql2');
+const superagent = require('superagent');
 
-const configuration = require('./configuration');
+const CONFIGURATION = require('./configuration');
 const logger = require('./logger');
+const { config } = require('winston');
 
 const app = new Koa();
 
 module.exports = app;
 
 app.env = 'production';
+
+let persistence;
+
+superagent
+  .post('192.168.1.248:8421/api/sentinel')
+  .send({})
+  .then((response) => {
+    persistence = mysql.createPool({
+      user: response.body.persistence.user,
+      password: response.body.persistence.password,
+      host: response.body.persistence.host,
+      port: response.body.persistence.port,
+      database: CONFIGURATION.DATABASE,
+      waitForConnections: true,
+      connectionLimit: CONFIGURATION.THREAD * 2,
+      queueLimit: CONFIGURATION.THREAD,
+    });
+  })
+  .catch((err) => {
+    logger.error(err.stack);
+  });
 
 app.use(bodyParser());
 
@@ -35,13 +60,12 @@ router.get('/:id', async (ctx) => {
           json_doc->'$.remark' as remark
         from ovaphlow.logbook
         where id = ?
-        limit 1
         `;
-    const pool = main.persistence.promise();
+    const pool = persistence.promise();
     const [result] = await pool.query(sql, [parseInt(ctx.params.id) || 0]);
     ctx.response.body = result[0] || {};
   } catch (err) {
-    logger.error(err);
+    logger.error(err.stack);
     ctx.response.status = 500;
   }
 });
@@ -72,7 +96,7 @@ router.put('/filter', async (ctx) => {
       ctx.response.body = [];
     }
   } catch (err) {
-    logger.error(err);
+    logger.error(err.stack);
     ctx.response.status = 500;
   }
 });
@@ -88,7 +112,7 @@ router.post('/', async (ctx) => {
     await pool.query(sql, [JSON.stringify(ctx.request.body)]);
     ctx.response.status = 200;
   } catch (err) {
-    logger.error(err);
+    logger.error(err.stack);
     ctx.response.status = 500;
   }
 });
@@ -103,7 +127,7 @@ if (require.main === module) {
     cluster.fork();
 
     cluster.on('online', (worker) => {
-      logger.info(`子进程 PID:${worker.process.pid} 端口:${configuration.port}`);
+      logger.info(`子进程 PID:${worker.process.pid} 端口:${CONFIGURATION.PORT}`);
     });
 
     cluster.on('exit', (worker, code, signal) => {
@@ -112,6 +136,6 @@ if (require.main === module) {
       cluster.fork();
     });
   } else {
-    http.createServer(app.callback()).listen(configuration.port);
+    http.createServer(app.callback()).listen(CONFIGURATION.PORT);
   }
 }
