@@ -8,9 +8,8 @@ const Router = require('@koa/router');
 const mysql = require('mysql2');
 const superagent = require('superagent');
 
-const CONFIGURATION = require('./configuration');
+// const CONFIGURATION = require('./configuration');
 const logger = require('./logger');
-const { config } = require('winston');
 
 const app = new Koa();
 
@@ -19,25 +18,6 @@ module.exports = app;
 app.env = 'production';
 
 let persistence;
-
-superagent
-  .post('192.168.1.248:8421/api/sentinel')
-  .send({})
-  .then((response) => {
-    persistence = mysql.createPool({
-      user: response.body.persistence.user,
-      password: response.body.persistence.password,
-      host: response.body.persistence.host,
-      port: response.body.persistence.port,
-      database: CONFIGURATION.DATABASE,
-      waitForConnections: true,
-      connectionLimit: CONFIGURATION.THREAD * 2,
-      queueLimit: CONFIGURATION.THREAD,
-    });
-  })
-  .catch((err) => {
-    logger.error(err.stack);
-  });
 
 app.use(bodyParser());
 
@@ -121,13 +101,34 @@ app.use(router.routes());
 app.use(router.allowedMethods());
 
 if (require.main === module) {
+  const port = parseInt(process.argv[2]) || 34202;
+
   if (cluster.isMaster) {
     logger.info(`主进程 PID:${process.pid}`); // eslint-disable-line
+
+    superagent
+      .post('192.168.1.248:8421/api/sentinel')
+      .send({ port, path_prefix: '/api/logbook/' })
+      .then((response) => {
+        persistence = mysql.createPool({
+          user: response.body.persistence_user,
+          password: response.body.persistence_password,
+          host: response.body.persistence_host,
+          port: response.body.persistence_port,
+          database: 'ovaphlow',
+          waitForConnections: true,
+          connectionLimit: os.cpus().length * 2,
+          queueLimit: os.cpus().length,
+        });
+      })
+      .catch((err) => {
+        logger.error(err.stack);
+      });
 
     cluster.fork();
 
     cluster.on('online', (worker) => {
-      logger.info(`子进程 PID:${worker.process.pid} 端口:${CONFIGURATION.PORT}`);
+      logger.info(`子进程 PID:${worker.process.pid} 端口:${port}`);
     });
 
     cluster.on('exit', (worker, code, signal) => {
@@ -136,6 +137,6 @@ if (require.main === module) {
       cluster.fork();
     });
   } else {
-    http.createServer(app.callback()).listen(CONFIGURATION.PORT);
+    http.createServer(app.callback()).listen(port);
   }
 }
